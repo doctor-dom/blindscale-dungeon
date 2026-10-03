@@ -83,13 +83,12 @@ Striking a wall ends the turn at once. The treasure is heavy: while you
 carry it you can cross only 4. The dragon's fire shortens your stride
 as well — 8, then 6, then 4. The third attack kills you.
 
-The dragon sleeps on the hoard until you come within three chambers of
-it (counted by orthogonal steps, diagonals included in the total). It
-then wakes. After your turn it flies one chamber toward you, through
-walls and on diagonals. Slip back into your secret room and it turns
-toward the treasure room instead. You only learn its square once it
-burns you. If it then flies off toward a hoard you have not found, you
-lose sight of it.
+The dragon sleeps on the hoard until you are three or fewer steps away,
+counting north, south, east, and west only. It then wakes. After your
+turn it flies one chamber toward you, through walls, and it may cut a
+corner. Slip back into your secret room and it turns toward the treasure
+room instead. You only learn its square once it burns you. If it then
+flies off toward a hoard you have not found, you lose sight of it.
 
 The map records only what you have learned:
 
@@ -614,6 +613,13 @@ class Game:
             dragon = "asleep"
         if self.carrying:
             loot = "in your hands"
+        elif (
+            self.chest_known
+            and self.dragon_visible
+            and self.chest is not None
+            and self.chest == self.dragon
+        ):
+            loot = f"under the dragon at {fmt_coord(self.chest)}"
         elif self.chest_known:
             loot = "marked on the map"
         else:

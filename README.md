@@ -24,12 +24,21 @@ In a terminal, press `n` `s` `e` `w` or the arrow keys. You do not need Enter fo
 
 - You may cross 8 chambers on a turn. A wall ends the turn, and the wall stays marked.
 - The treasure is heavy. While you carry it, the limit is 4 chambers.
-- The dragon sleeps until you come within three chambers of the hoard. It then flies one chamber after each of your turns, through walls and on diagonals, toward you.
+- The dragon sleeps until you come within three steps of the hoard, counting north, south, east, and west. It then flies one chamber after each of your turns, through walls and cutting corners, toward you.
 - Its fire throws you back to your secret room. Your stride becomes 6, then 4. The third attack kills you. A treasure you were carrying drops on the square where you fell.
 - Hide in your secret room and the dragon turns back toward the treasure room. You only get to mark the dragon after it burns you. If it flies off toward a hoard you have never found, you lose sight of it.
 - Win by carrying the treasure into your secret room.
 
-The map keeps three kinds of edge:
+The map keeps three kinds of edge. In this corner, B2 was the secret room, the step north of it struck a wall, and the step east was open:
+
+```
+     A   B   C
+   +---+---+---+
+ 1 |   :   :   |
+   +...+---+...+
+ 2 |   : S   @ |
+   +...+...+...+
+```
 
 ```
 ...  and  :    not tried yet

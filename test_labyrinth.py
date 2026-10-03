@@ -30,6 +30,14 @@ def open_all(game: Game) -> None:
             row[col] = False
 
 
+def column_header(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("A") and stripped.endswith("H") and "|" not in line:
+            return line
+    raise AssertionError("column header missing")
+
+
 def grid_rows(text: str) -> list[str]:
     return [line for line in text.splitlines() if re.match(r"\s+\d \|", line)]
 
@@ -93,20 +101,24 @@ def step_toward_goal(game: Game, goal, avoid: set[tuple[int, int]]) -> str | Non
     return direction(game.pos, nxt)
 
 
-def flee(game: Game) -> str:
+def safe_last_step(game: Game) -> str:
+    """End the turn where the dragon will not land, and not in the secret room.
+
+    Ending in the secret room sends the dragon back to the hoard.
+    """
     best = None
     for name, nxt in neighbors(game, game.pos, set()):
         if game.awake and nxt == game.dragon:
             continue
         if not game.awake and nxt == game.treasure_room:
             continue
-        score = (
-            chebyshev(nxt, game.dragon) if game.awake else 0,
-            manhattan(nxt, game.treasure_room),
-            name,
-        )
-        if best is None or score > best[0]:
-            best = (score, name)
+        cheb = chebyshev(nxt, game.dragon) if game.awake else 9
+        survives = 1 if cheb >= 2 else 0
+        not_secret = 0 if nxt == game.secret else 1
+        away = manhattan(nxt, game.treasure_room)
+        key = (survives, not_secret, cheb, away, name)
+        if best is None or key > best[0]:
+            best = (key, name)
     return best[1] if best else "end"
 
 
@@ -116,7 +128,7 @@ def lure_step(game: Game) -> str:
     for row in range(SIZE):
         for col in range(SIZE):
             cell = (row, col)
-            if cell in blocked:
+            if cell in blocked or cell == game.secret:
                 continue
             path = bfs(game, game.pos, cell, blocked)
             if not path:
@@ -126,21 +138,22 @@ def lure_step(game: Game) -> str:
             if best is None or key > best[0]:
                 best = (key, path)
     if best is None:
-        return flee(game)
+        return safe_last_step(game)
     path = best[1]
     if len(path) < 2:
-        return flee(game)
+        return "end"
     nxt = path[1]
     if game.awake and nxt == game.dragon:
-        return flee(game)
+        return safe_last_step(game)
+    if game.moves_left == 1 and nxt == game.secret:
+        return safe_last_step(game)
     return direction(game.pos, nxt)
 
 
 def rush_plan(game: Game) -> list[str] | None:
     """Omniscient dry run. Returns the commands if they win, else None."""
-    if not game.awake or game.dragon == game.treasure_room and not game.carrying:
-        if not game.carrying:
-            return None
+    if not game.carrying and (not game.awake or game.dragon == game.treasure_room):
+        return None
     sim = copy.deepcopy(game)
     commands: list[str] = []
     guard = 0
@@ -178,19 +191,39 @@ def rush_plan(game: Game) -> list[str] | None:
     return None
 
 
+def go_home(game: Game) -> str:
+    plan = rush_plan(game)
+    if plan:
+        return plan[0]
+    avoid = {game.dragon} if game.awake else set()
+    avoid.discard(game.secret)
+    cmd = step_toward_goal(game, game.secret, avoid)
+    if cmd is None:
+        cmd = step_toward_goal(game, game.secret, set())
+    return cmd or "end"
+
+
 def choose_action(game: Game) -> str:
     if game.phase != "play":
         return "q"
-    if game.carrying or game.awake:
-        plan = rush_plan(game)
-        if plan:
-            return plan[0]
-    if game.awake and not game.carrying:
-        if chebyshev(game.pos, game.dragon) <= 2 or game.moves_left == 1:
-            return flee(game)
-        return lure_step(game)
-    cmd = step_toward_goal(game, game.treasure_room, set())
-    return cmd or "end"
+    if game.carrying:
+        return go_home(game)
+    if not game.awake:
+        cmd = step_toward_goal(game, game.treasure_room, set())
+        return cmd or "end"
+    plan = rush_plan(game)
+    if plan:
+        return plan[0]
+    # Already far from the hoard: stop wandering and let the dragon chase.
+    if (
+        manhattan(game.pos, game.treasure_room) >= 6
+        and chebyshev(game.dragon, game.treasure_room) <= 2
+        and game.moves_left < game.allowance()
+    ):
+        return "end"
+    if game.moves_left == 1:
+        return safe_last_step(game)
+    return lure_step(game)
 
 
 class LabyrinthTests(unittest.TestCase):
@@ -266,21 +299,12 @@ class LabyrinthTests(unittest.TestCase):
     def test_player_sits_under_the_right_column(self) -> None:
         game = Game(seed=1)
         game.command("a1")
-        lines = game.render().splitlines()
-        header = next(line for line in lines if "B" in line and "H" in line and "A" in line)
+        header = column_header(game.render())
         row = grid_rows(game.render())[0]
         self.assertEqual(header.index("A"), row.index("@"))
         game = Game(seed=1)
         game.command("h8")
-        header = next(
-            line for line in game.render().splitlines() if line.strip().startswith("A") or "H" in line
-        )
-        # The letter row is the one whose stripped form is mostly letters.
-        header = next(
-            line
-            for line in game.render().splitlines()
-            if "A" in line and "H" in line and "---" not in line and "|" not in line
-        )
+        header = column_header(game.render())
         row = grid_rows(game.render())[-1]
         self.assertEqual(header.index("H"), row.index("@"))
 
@@ -305,16 +329,21 @@ class LabyrinthTests(unittest.TestCase):
         game = Game(seed=4)
         game.command("A1")
         game.v_wall[0][0] = False
+        game.v_wall[0][1] = False
         messages = game.command("e")
         self.assertTrue(any(m.startswith("[clear]") for m in messages))
         self.assertEqual(game.pos, (0, 1))
         self.assertEqual(game.known_v[0][0], OPEN)
         self.assertEqual(game.moves_left, 7)
-        self.assertIn(".", "\n".join(grid_rows(game.render())))
+        game.command("e")
+        blob = "\n".join(grid_rows(game.render()))
+        self.assertIn(".", blob)
+        self.assertIn("S", blob)
+        self.assertIn("@", blob)
         held = game.command("n")
         self.assertTrue(any(m.startswith("[edge]") for m in held))
-        self.assertEqual(game.pos, (0, 1))
-        self.assertEqual(game.moves_left, 7)
+        self.assertEqual(game.pos, (0, 2))
+        self.assertEqual(game.moves_left, 6)
 
     def test_secret_marker_remains_after_you_leave(self) -> None:
         game = Game(seed=5)
@@ -426,7 +455,10 @@ class LabyrinthTests(unittest.TestCase):
         self.assertEqual(game.steps_taken, 0)
         self.assertEqual(game.allowance(), 4)
         self.assertIn("$", "\n".join(grid_rows(game.render())))
-        self.assertIn("t", "\n".join(grid_rows(game.render())))
+        game.command("w")
+        blob = "\n".join(grid_rows(game.render()))
+        self.assertIn("$", blob)
+        self.assertIn("t", blob)
         while game.phase == "play":
             game.command("w")
         self.assertEqual(game.phase, "won")
@@ -467,8 +499,10 @@ class LabyrinthTests(unittest.TestCase):
         self.assertEqual(game.chest, (2, 2))
         self.assertEqual(game.pos, (0, 0))
         blob = "\n".join(grid_rows(game.render()))
-        self.assertIn("T", blob)
+        # The dragon is still standing on the dropped chest, so the map shows D.
+        self.assertIn("D", blob)
         self.assertIn("t", blob)
+        self.assertIn("under the dragon at C3", game.render())
 
     def test_manual_chase_can_be_won(self) -> None:
         game = Game(seed=12)
