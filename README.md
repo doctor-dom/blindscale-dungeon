@@ -25,7 +25,8 @@ In a terminal, press `w` `a` `s` `d` or the arrow keys. `W` is north, `A` west, 
 - You may cross 8 chambers on a turn. A wall ends the turn, and the wall stays marked.
 - Blindscale's fire shortens that stride to 6, then 4. The third attack kills you.
 - The treasure is heavy. While you carry it, the stride you have left is cut in half: 8 becomes 4, 6 becomes 3, and 4 becomes 2.
-- Blindscale sleeps on the nest, with the treasure, until you come within three chambers of that nest, counting north, south, east, and west. The wake tells you that you are within three chambers of Blindscale's Nest. After each of your turns the dragon flies one chamber toward you, through walls, and may cut a corner.
+- Blindscale sleeps on the nest, with the treasure, until you come within three chambers of that nest, counting north, south, east, and west. The roar tells you that you are within three chambers of the treasure. After each of your turns the dragon flies one chamber toward you, through walls, and may cut a corner.
+- You can snatch the treasure without being burned only by taking it in the nest while Blindscale is in that same room. Enter any other chamber the dragon occupies and you are burned at once, including a room where dropped treasure and the dragon are together.
 - Its fire throws you back to the stairwell. A treasure you were carrying drops on the square where you fell.
 - Hide in the stairwell and Blindscale turns back toward the nest. If you have never entered the nest, the true dragon marker hides again. The nest stays blank until you walk into that chamber.
 - Mark where you think Blindscale is at any time (`mark E4`, or the `m` key), including while it sleeps and again after a burn. The guess is `?D`. It then moves by the same step as Blindscale until you meet the dragon again. If the true dragon is also on the map and the guess is a different chamber, both markers move.

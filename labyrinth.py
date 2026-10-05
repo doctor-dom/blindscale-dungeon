@@ -88,11 +88,16 @@ attack kills you. The treasure is heavy: while you carry it, that
 stride is cut in half (8 becomes 4, 6 becomes 3, 4 becomes 2).
 
 Blindscale sleeps on the nest, with the treasure, until you are three
-or fewer steps away, counting north, south, east, and west only. The
-wake means you are within three chambers of Blindscale's Nest. After
+or fewer steps away, counting north, south, east, and west only. You
+hear the roar when you are within three chambers of the treasure. After
 your turn the dragon flies one chamber toward you, through walls, and
 may cut a corner. Return to the stairwell and it turns back toward the
-nest. You do not see the true square until you stumble upon the dragon.
+nest.
+
+You may snatch the treasure without being burned only when Blindscale
+is in the nest with it and you take it from that room. Step into any
+other chamber the dragon occupies and you are burned at once. That
+includes a room where a dropped treasure and Blindscale are together.
 
 Mark where you think Blindscale is at any time, including before it
 wakes and again after it burns you:
@@ -221,6 +226,7 @@ class Game:
         self.chest_known = False
         self.treasure_room_known = False
         self.burned = False
+        self.heist_grace = False
         self.gold_spill: set[Coord] = set()
         self.endurance = ENDURANCE
         self.turn = 1
@@ -453,14 +459,32 @@ class Game:
         self.visited.add(dest)
         self.steps_taken += 1
         messages = [f"[clear] You step {DIR_NAME[direction]} to {fmt_coord(dest)}."]
-        if not self.carrying and self.chest == dest:
+        # The one theft Blindscale allows: the chest, the dragon, and you
+        # are all in the nest. Every other shared chamber burns on entry.
+        heist = (
+            not self.carrying
+            and self.chest == dest
+            and dest == self.treasure_room
+            and self.dragon == dest
+        )
+        dragon_here = self.dragon == dest
+        in_stairwell = dest == self.stairwell
+        burn_on_entry = dragon_here and not in_stairwell and not heist
+        if not self.carrying and self.chest == dest and not burn_on_entry:
             self.carrying = True
             self.chest_known = True
             if dest == self.treasure_room:
                 self.treasure_room_known = True
-            messages.append(
-                "[chime] The treasure is here. It is heavy — your stride is cut in half while you carry it."
-            )
+            if heist:
+                messages.append(
+                    "[chime] You snatch the treasure from under Blindscale. "
+                    "The dragon does not burn you for this theft. "
+                    "It is heavy — your stride is cut in half while you carry it."
+                )
+            else:
+                messages.append(
+                    "[chime] The treasure is here. It is heavy — your stride is cut in half while you carry it."
+                )
         elif dest == self.treasure_room and not self.treasure_room_known:
             self.treasure_room_known = True
             messages.append("[found] You enter Blindscale's Nest.")
@@ -479,15 +503,21 @@ class Game:
         ):
             self.awake = True
             messages.append(
-                "[roar] Blindscale wakes. You are within three chambers of Blindscale's Nest. "
-                "Mark where you think the dragon is, for example: mark E4"
+                "[roar] You hear Blindscale's echoing roar and know you are within "
+                "three chambers of the treasure! You can mark and track the dragon's "
+                "probable location on your map as it makes chase, but there is only "
+                "one way to find out if you were right..."
             )
-        if self.awake and self.dragon == self.pos:
-            if self.pos != self.stairwell:
-                messages.extend(self._attack())
-                if self.phase == "play":
-                    messages.extend(self._finish_turn())
-                return messages
+        if dragon_here and not in_stairwell and not heist:
+            self.awake = True
+            messages.extend(self._attack())
+            if self.phase == "play":
+                messages.extend(self._finish_turn())
+            return messages
+        if dragon_here and in_stairwell and self.awake:
+            messages.extend(self._reveal_true_dragon())
+        elif heist:
+            self.heist_grace = True
             messages.extend(self._reveal_true_dragon())
         if self.moves_left == 0:
             messages.extend(self._finish_turn())
@@ -513,7 +543,10 @@ class Game:
         if not self.awake or self.phase != "play" or self.dragon is None or self.pos is None:
             return []
         safe = self.pos == self.stairwell
-        if not safe and self.dragon == self.pos:
+        # The snatch itself is not a burn. Lingering until a later turn is.
+        grace = self.heist_grace and self.pos == self.treasure_room
+        self.heist_grace = False
+        if not safe and self.dragon == self.pos and not grace:
             return self._attack()
 
         messages: list[str] = []

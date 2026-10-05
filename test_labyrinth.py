@@ -370,7 +370,8 @@ class LabyrinthTests(unittest.TestCase):
         self.assertEqual(game.dragon, (0, 5))
         second = game.command("d")  # C1, distance 3
         self.assertTrue(game.awake)
-        self.assertTrue(any("Blindscale's Nest" in m for m in second))
+        self.assertTrue(any("echoing roar" in m for m in second))
+        self.assertTrue(any("three chambers of the treasure" in m for m in second))
         self.assertTrue(any(m.startswith("[roar]") for m in second))
         self.assertEqual(game.dragon, (0, 5))
         self.assertFalse(game.dragon_visible)
@@ -791,6 +792,77 @@ class LabyrinthTests(unittest.TestCase):
         self.assertNotIn("D", blob)
         self.assertNotIn("t", blob)
         self.assertIn("?D", "\n".join(grid_rows(game.render())))
+
+    def test_snatch_from_the_nest_does_not_burn(self) -> None:
+        game = Game(seed=22)
+        game.command("A1")
+        open_all(game)
+        game.treasure_room = (0, 2)
+        game.chest = (0, 2)
+        game.dragon = (0, 2)
+        game.awake = False
+        game.pos = (0, 1)
+        game.steps_taken = 0
+        game.moves_left = 8
+        messages = game.command("d")
+        self.assertTrue(game.carrying)
+        self.assertEqual(game.endurance, 3)
+        self.assertEqual(game.phase, "play")
+        self.assertEqual(game.pos, (0, 2))
+        self.assertTrue(game.treasure_room_known)
+        self.assertTrue(game.dragon_visible)
+        self.assertTrue(any("snatch" in m for m in messages))
+        self.assertFalse(any(m.startswith("[fire]") for m in messages))
+        self.assertTrue(any("echoing roar" in m for m in messages))
+
+    def test_snatch_that_ends_the_turn_still_spares_you_once(self) -> None:
+        game = Game(seed=23)
+        game.command("A1")
+        open_all(game)
+        game.treasure_room = (0, 2)
+        game.chest = (0, 2)
+        game.dragon = (0, 2)
+        game.awake = True
+        game.pos = (0, 1)
+        game.steps_taken = 3
+        game.moves_left = 5
+        messages = game.command("d")
+        self.assertTrue(game.carrying)
+        self.assertEqual(game.endurance, 3)
+        self.assertEqual(game.pos, (0, 2))
+        self.assertFalse(any(m.startswith("[fire]") for m in messages))
+        # The next turn in the nest is an ordinary encounter.
+        again = game.command("end")
+        self.assertEqual(game.endurance, 2)
+        self.assertFalse(game.carrying)
+        self.assertEqual(game.chest, (0, 2))
+        self.assertEqual(game.pos, (0, 0))
+        self.assertTrue(any(m.startswith("[fire]") for m in again))
+
+    def test_dropped_treasure_under_the_dragon_burns_on_entry(self) -> None:
+        game = Game(seed=24)
+        game.command("A1")
+        open_all(game)
+        game.treasure_room = (7, 7)
+        game.chest = (0, 2)
+        game.chest_known = True
+        game.dragon = (0, 2)
+        game.awake = True
+        game.pos = (0, 1)
+        game.steps_taken = 0
+        game.moves_left = 8
+        messages = game.command("d")
+        self.assertFalse(game.carrying)
+        self.assertEqual(game.chest, (0, 2))
+        self.assertEqual(game.endurance, 2)
+        self.assertEqual(game.pos, (0, 0))
+        self.assertTrue(any(m.startswith("[fire]") for m in messages))
+        self.assertFalse(any("snatch" in m or m.startswith("[chime]") for m in messages))
+        self.assertTrue(any("C1" in m for m in messages))
+        blob = "\n".join(grid_rows(game.render()))
+        self.assertIn("T", blob)
+        self.assertNotIn("D", blob.replace("?D", ""))
+        self.assertFalse(game.dragon_visible)
 
 
 def step_back_toward_hoard(dragon, hoard):
