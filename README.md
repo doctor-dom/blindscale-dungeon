@@ -27,8 +27,10 @@ In a terminal, press `w` `a` `s` `d` or the arrow keys. `W` is north, `A` west, 
 - The treasure is heavy. While you carry it, the stride you have left is cut in half: 8 becomes 4, 6 becomes 3, and 4 becomes 2.
 - Blindscale sleeps on the nest, with the treasure, until you come within three chambers of that nest, counting north, south, east, and west. The wake tells you that you are within three chambers of Blindscale's Nest. After each of your turns the dragon flies one chamber toward you, through walls, and may cut a corner.
 - Its fire throws you back to the stairwell. A treasure you were carrying drops on the square where you fell.
-- Hide in the stairwell and Blindscale turns back toward the nest. If you have never found the nest, the true dragon marker hides again.
-- When Blindscale wakes, mark where you think the dragon is (`mark E4`, or the `m` key). The guess is `?D`. It then moves by the same step as Blindscale. Stumble on the real dragon and a wrong `?D` disappears; a correct one becomes the true marker, `D`.
+- Hide in the stairwell and Blindscale turns back toward the nest. If you have never entered the nest, the true dragon marker hides again. The nest stays blank until you walk into that chamber.
+- Mark where you think Blindscale is at any time (`mark E4`, or the `m` key), including while it sleeps and again after a burn. The guess is `?D`. It then moves by the same step as Blindscale until you meet the dragon again. If the true dragon is also on the map and the guess is a different chamber, both markers move.
+- After Blindscale burns you, its return to the nest spills gold one chamber outward in every direction. The map shows `g` on that ring. The nest chamber itself is not revealed.
+- Stumble on the real dragon and a wrong `?D` disappears; a correct one becomes the true marker, `D`.
 - Win by carrying the treasure into the stairwell.
 
 The map keeps three kinds of edge. In this corner, B2 was the stairwell, the step north of it struck a wall, and the step east was open:
@@ -48,7 +50,7 @@ The map keeps three kinds of edge. In this corner, B2 was the stairwell, the ste
 a gap          a passage you have walked
 ```
 
-`@` is you, `$` is you with the treasure, `S` is the stairwell. `T` is treasure you have found, `t` is the empty nest, `?D` is your guess, and `D` is Blindscale once you have met the dragon.
+`@` is you, `$` is you with the treasure, `S` is the stairwell. `T` is treasure you have found, `t` is the empty nest once you have entered it, `g` is gold spilled around the nest, `?D` is your guess, and `D` is Blindscale once you have met the dragon.
 
 ## Tests
 

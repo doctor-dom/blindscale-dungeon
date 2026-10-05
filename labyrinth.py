@@ -6,8 +6,10 @@ the nest, which is also where the treasure starts. You came in by a stairwell
 you choose, and that is the one chamber where the dragon will not strike.
 
 Movement is WASD or the arrow keys. Carrying the treasure halves whatever
-stride the dragon's fire has left you. After Blindscale wakes you may mark
-a guess, shown as ?D, and that mark moves as the dragon actually moves.
+stride the dragon's fire has left you. You may mark a guess, shown as ?D,
+at any time. That mark moves as the dragon actually moves until you meet
+Blindscale again. After a burn, the dragon's return spills gold around the
+nest without revealing the nest itself.
 """
 
 from __future__ import annotations
@@ -92,13 +94,20 @@ your turn the dragon flies one chamber toward you, through walls, and
 may cut a corner. Return to the stairwell and it turns back toward the
 nest. You do not see the true square until you stumble upon the dragon.
 
-When Blindscale wakes, mark where you think the dragon is:
+Mark where you think Blindscale is at any time, including before it
+wakes and again after it burns you:
 
   mark E4
 
-The mark is ?D. It then moves exactly as Blindscale moves. If you
-stumble upon the dragon, a wrong ?D disappears and a right one becomes
-the true marker, D.
+The mark is ?D. It then moves exactly as Blindscale moves, until you
+meet the dragon again. If you can also see the true dragon and the
+guess is a different chamber, both stay on the map. A wrong ?D
+disappears when you meet Blindscale. A right one becomes the true
+marker, D.
+
+The nest stays hidden until you walk into it. After Blindscale has
+burned you, its return to the nest spills gold one chamber outward
+in every direction. That ring is g. The nest chamber itself stays blank.
 
 The map records only what you have learned:
 
@@ -107,8 +116,9 @@ The map records only what you have learned:
   a gap         a passage you walked
   .             a chamber you have entered
   @ you    $ you, carrying the treasure    S the stairwell
-  T treasure sitting there    t the empty nest, once you know it
-  ?D your guess    D Blindscale, once found    * you and Blindscale
+  T treasure sitting there    t the empty nest, once you enter it
+  g gold spilled around the nest    ?D your guess
+  D Blindscale, once found    * you and Blindscale
 
 Commands
   w a s d     step (also the arrow keys)
@@ -179,6 +189,7 @@ TAG_COLOR = {
     "[defeat]": "1;31",
     "[no]": "2",
     "[found]": "1;33",
+    "[echo]": "1;33",
 }
 
 
@@ -209,6 +220,8 @@ class Game:
         self.carrying = False
         self.chest_known = False
         self.treasure_room_known = False
+        self.burned = False
+        self.gold_spill: set[Coord] = set()
         self.endurance = ENDURANCE
         self.turn = 1
         self.steps_taken = 0
@@ -307,7 +320,7 @@ class Game:
         lines.append(self._hline([WALL] * SIZE, color))
         lines.append("")
         lines.append("... : untested    --- | wall    gap  passage you walked    . entered")
-        lines.append("@ you   $ with treasure   S stairwell   T treasure   t empty nest")
+        lines.append("@ you   $ with treasure   S stairwell   T treasure   t empty nest   g spilled gold")
         lines.append("?D your guess of Blindscale   D Blindscale, once found   * you and Blindscale")
         lines.append("")
         lines.extend(self._status(color))
@@ -405,10 +418,6 @@ class Game:
         ]
 
     def _place_mark(self, rest: str) -> list[str]:
-        if not self.awake:
-            return ["[no] Blindscale is still asleep. There is nothing to mark."]
-        if self.dragon_visible:
-            return ["[no] You have already found Blindscale. The true marker is D."]
         if not rest:
             return ["[no] Name a chamber, such as mark E4."]
         pos = parse_coord(rest)
@@ -452,6 +461,9 @@ class Game:
             messages.append(
                 "[chime] The treasure is here. It is heavy — your stride is cut in half while you carry it."
             )
+        elif dest == self.treasure_room and not self.treasure_room_known:
+            self.treasure_room_known = True
+            messages.append("[found] You enter Blindscale's Nest.")
         self.moves_left = max(0, self.allowance() - self.steps_taken)
         if self.carrying and self.pos == self.stairwell:
             self.phase = "won"
@@ -524,6 +536,8 @@ class Game:
             if not safe and self.dragon == self.pos:
                 messages.extend(self._attack())
                 return messages
+            if safe and self.burned and self.dragon == self.treasure_room:
+                messages.extend(self._spill_gold())
             if self.dragon_visible:
                 messages.append(f"[wings] Blindscale glides to {fmt_coord(self.dragon)}.")
             elif not safe:
@@ -532,9 +546,25 @@ class Game:
             messages.append("[still] Blindscale waits in the nest.")
         return messages
 
+    def _spill_gold(self) -> list[str]:
+        """Gold rings the nest. The nest chamber itself stays unmarked."""
+        assert self.treasure_room is not None
+        row, col = self.treasure_room
+        for drow in (-1, 0, 1):
+            for dcol in (-1, 0, 1):
+                if drow == 0 and dcol == 0:
+                    continue
+                pos = (row + drow, col + dcol)
+                if in_bounds(pos):
+                    self.gold_spill.add(pos)
+        return [
+            "[echo] You hear Blindscale return to its hoard, as well as "
+            "the echo of treasure down upon its impact!"
+        ]
+
     def _shift_mark(self, previous: Coord, current: Coord) -> list[str]:
         """Move ?D by the same delta as Blindscale. Drop it if it leaves the lair."""
-        if self.dragon_mark is None or self.dragon_visible:
+        if self.dragon_mark is None:
             return []
         drow = current[0] - previous[0]
         dcol = current[1] - previous[1]
@@ -563,6 +593,7 @@ class Game:
 
     def _attack(self) -> list[str]:
         assert self.pos is not None and self.stairwell is not None
+        self.burned = True
         messages = self._reveal_true_dragon()
         burn = fmt_coord(self.pos)
         dropped = False
@@ -622,7 +653,7 @@ class Game:
             return "$" if self.carrying else "@"
         if dragon_here:
             return "D"
-        if self.dragon_mark == pos and not self.dragon_visible:
+        if self.dragon_mark == pos:
             return "?D"
         if self.chest_known and not self.carrying and self.chest == pos:
             return "T"
@@ -630,6 +661,8 @@ class Game:
             return "t"
         if self.stairwell == pos:
             return "S"
+        if pos in self.gold_spill:
+            return "g"
         if pos in self.visited:
             return "."
         return " "
@@ -684,6 +717,7 @@ class Game:
             "t": "33",
             "D": "1;31",
             "?D": "1;33",
+            "g": "1;33",
             "*": "1;35",
             ".": "2",
         }.get(glyph)
@@ -732,7 +766,7 @@ class Game:
             f"Chambers left {self.moves_left}"
         )
         lines.append(f"Dragon: {dragon}   Treasure: {loot}")
-        if self.awake and not self.dragon_visible and self.dragon_mark is not None:
+        if self.dragon_mark is not None:
             lines.append(f"Guess: ?D at {fmt_coord(self.dragon_mark)}")
         return lines
 

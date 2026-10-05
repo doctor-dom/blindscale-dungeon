@@ -673,6 +673,125 @@ class LabyrinthTests(unittest.TestCase):
         self.assertIn("D", blob)
         self.assertNotIn("?D", blob)
 
+    def test_mark_works_while_the_dragon_sleeps_and_beside_the_true_dragon(self) -> None:
+        game = Game(seed=18)
+        game.command("A1")
+        messages = game.command("mark E4")
+        self.assertFalse(game.awake)
+        self.assertEqual(game.dragon_mark, (3, 4))
+        self.assertEqual(game.moves_left, 8)
+        self.assertTrue(any("?D" in m for m in messages))
+        self.assertIn("?D", "\n".join(grid_rows(game.render())))
+        game.command("end")
+        self.assertEqual(game.dragon_mark, (3, 4))
+
+        open_all(game)
+        game.treasure_room = (0, 5)
+        game.chest = (0, 5)
+        game.dragon = (0, 5)
+        game.awake = True
+        game.dragon_visible = True
+        game.treasure_room_known = True
+        game.pos = (7, 7)
+        game.moves_left = 8
+        game.command("mark C1")
+        game.command("end")
+        # (0, 5) toward (7, 7) steps to (1, 6). C1 is (0, 2); the same step lands on (1, 3).
+        self.assertEqual(game.dragon, (1, 6))
+        self.assertEqual(game.dragon_mark, (1, 3))
+        blob = "\n".join(grid_rows(game.render()))
+        self.assertIn("D", blob)
+        self.assertIn("?D", blob)
+        self.assertTrue(game.dragon_visible)
+
+    def test_burn_spills_gold_around_a_hidden_nest(self) -> None:
+        game = Game(seed=19)
+        game.command("A1")
+        open_all(game)
+        game.treasure_room = (4, 4)
+        game.chest = (4, 4)
+        game.dragon = (4, 3)
+        game.awake = True
+        game.burned = True
+        game.endurance = 2
+        game.pos = (0, 0)
+        game.phase = "play"
+        game.moves_left = 8
+        game.command("end")
+        self.assertEqual(game.dragon, (4, 4))
+        self.assertFalse(game.treasure_room_known)
+        self.assertFalse(game.dragon_visible)
+        joined = " ".join(game.log)
+        self.assertIn(
+            "You hear Blindscale return to its hoard, as well as the echo of treasure down upon its impact!",
+            joined,
+        )
+        self.assertNotIn(fmt_coord(game.treasure_room), joined)
+        self.assertNotIn(fmt_coord(game.treasure_room), game.render())
+        ring = {
+            (4 + drow, 4 + dcol)
+            for drow in (-1, 0, 1)
+            for dcol in (-1, 0, 1)
+            if not (drow == 0 and dcol == 0)
+        }
+        self.assertEqual(game.gold_spill, ring)
+        blob = "\n".join(grid_rows(game.render()))
+        self.assertNotIn("t", blob)
+        self.assertEqual(blob.count("g"), 8)
+
+        game.dragon = (7, 7)
+        game.dragon_visible = False
+        game.chest = (0, 0)
+        game.pos = (4, 3)
+        game.steps_taken = 0
+        game.moves_left = 8
+        messages = game.command("d")
+        self.assertTrue(game.treasure_room_known)
+        self.assertTrue(any("Blindscale's Nest" in m for m in messages))
+        game.command("a")
+        self.assertIn("t", "\n".join(grid_rows(game.render())))
+
+    def test_a_safe_return_before_any_burn_spills_nothing(self) -> None:
+        game = Game(seed=20)
+        game.command("A1")
+        open_all(game)
+        game.treasure_room = (4, 4)
+        game.chest = (4, 4)
+        game.dragon = (4, 3)
+        game.awake = True
+        game.pos = (0, 0)
+        game.moves_left = 8
+        game.command("end")
+        self.assertEqual(game.dragon, (4, 4))
+        self.assertFalse(game.gold_spill)
+        self.assertNotIn("echo of treasure", " ".join(game.log))
+        self.assertFalse(game.treasure_room_known)
+
+    def test_a_mark_after_a_burn_keeps_tracking_the_hidden_dragon(self) -> None:
+        game = Game(seed=21)
+        game.command("A1")
+        open_all(game)
+        game.treasure_room = (4, 4)
+        game.chest = (4, 4)
+        game.dragon = (4, 4)
+        game.awake = True
+        game.burned = True
+        game.endurance = 2
+        game.dragon_visible = False
+        game.pos = (0, 1)
+        game.moves_left = 8
+        game.command("mark C5")
+        game.command("end")
+        # Dragon (4, 4) toward the player at (0, 1) steps to (3, 3). C5 is (4, 2).
+        self.assertEqual(game.dragon, (3, 3))
+        self.assertEqual(game.dragon_mark, (3, 1))
+        self.assertFalse(game.dragon_visible)
+        self.assertFalse(game.treasure_room_known)
+        blob = "\n".join(grid_rows(game.render())).replace("?D", "")
+        self.assertNotIn("D", blob)
+        self.assertNotIn("t", blob)
+        self.assertIn("?D", "\n".join(grid_rows(game.render())))
+
 
 def step_back_toward_hoard(dragon, hoard):
     from labyrinth import step_toward
