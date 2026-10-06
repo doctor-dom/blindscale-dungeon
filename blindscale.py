@@ -6,10 +6,16 @@ the nest, which is also where the treasure starts. You came in by a stairwell
 you choose, and that is the one chamber where the dragon will not strike.
 
 Movement is WASD or the arrow keys. Carrying the treasure halves whatever
-stride the dragon's fire has left you. You may mark a guess, shown as ?D,
-at any time. That mark moves as the dragon actually moves until you meet
-Blindscale again. After a burn, the dragon's return spills gold around the
-nest without revealing the nest itself.
+stride the dragon's fire has left you. The steps still left this turn are
+shown as a count and a bar. Easy keeps T? and D? sense flags for you.
+Normal lets you place them after a roar, a breadth warning, or a burn,
+and remove them on a quiet step. Each D? chases from its own square.
+A burn leaves a glowing D* on that chamber for two steps. Within one
+chamber of the dragon, diagonals included, you feel its breadth. After
+a burn, the dragon's return spills
+gold one chamber north, south, east, and west of the nest. That gold
+stays unseen until you walk into the chamber, and the nest itself
+stays hidden.
 """
 
 from __future__ import annotations
@@ -25,6 +31,12 @@ SIZE = 8
 WAKE_DISTANCE = 3
 WALL_ODDS = 0.80
 ENDURANCE = 3
+BURN_MARK_STEPS = 2
+# An 8×8 lair has 112 inner edges. A connected lair needs 63 passages,
+# so 49 is the most walls that still leave every chamber reachable.
+# Easy opens passages until exactly 25 walls remain.
+WALL_COUNTS = {"easy": 25}
+DIFFICULTIES = ("easy", "normal")
 
 WALL = "wall"
 OPEN = "open"
@@ -77,9 +89,11 @@ The lair is an 8 by 8 grid. A1 is the north-west corner and H8 is the
 south-east. North is up. You can see the squares. You cannot see the
 walls, Blindscale's Nest, or Blindscale until the lair tells you.
 
-Choose a stairwell. That chamber is where you entered the lair, and
-Blindscale will not attack you inside it. Find the treasure and carry
-it back to the stairwell.
+Choose a difficulty, then a stairwell. Easy lays 25 walls, and
+every chamber can be reached. Normal keeps the seeded odds, so the
+wall count changes with the seed. The stairwell is where you entered
+the lair, and Blindscale will not attack you inside it. Find the
+treasure and carry it back to the stairwell.
 
 Move with WASD or the arrow keys. W is north, A west, S south, D east.
 You may cross 8 chambers. Striking a wall ends the turn at once.
@@ -99,20 +113,32 @@ is in the nest with it and you take it from that room. Step into any
 other chamber the dragon occupies and you are burned at once. That
 includes a room where a dropped treasure and Blindscale are together.
 
-Mark where you think Blindscale is at any time, including before it
-wakes and again after it burns you:
+Sense flags help you narrow the treasure room and the dragon:
 
-  mark E4
+  mt E4   possible treasure room (T?)
+  md E4   dragon guess (D?)
 
-The mark is ?D. It then moves exactly as Blindscale moves, until you
-meet the dragon again. If you can also see the true dragon and the
-guess is a different chamber, both stay on the map. A wrong ?D
-disappears when you meet Blindscale. A right one becomes the true
-marker, D.
+In the terminal, press m, then t or d, then name a chamber. Repeat mt
+or md on the same chamber to clear that flag. Easy maintains
+both sets for you. In normal, when Blindscale first roars you may place
+many T? but only one D? until your next step or end. Each D? steps
+toward you on its own. Every D? vanishes when you are burned.
 
-The nest stays hidden until you walk into it. After Blindscale has
-burned you, its return to the nest spills gold one chamber outward
-in every direction. That ring is g. The nest chamber itself stays blank.
+The treasure room stays hidden until you walk into it (T), or until
+your roar D? was on the true starting chamber and the first burn
+proves it (T).
+
+After Blindscale has burned you, its return to the nest spills gold
+one chamber north, south, east, and west. You see g only after you
+walk into that chamber. The gold does not mark the nest itself.
+
+The chamber where the fire hit you glows as D* for two of your steps.
+Dropped treasure shows as t once the glow fades.
+
+Come within one chamber of Blindscale — north, south, east, west, or
+on a diagonal — and the lair tells you:
+
+  You can almost feel Blindscale's breadth and sense that it is one chamber away!
 
 The map records only what you have learned:
 
@@ -121,14 +147,18 @@ The map records only what you have learned:
   a gap         a passage you walked
   .             a chamber you have entered
   @ you    $ you, carrying the treasure    S the stairwell
-  T treasure sitting there    t the empty nest, once you enter it
-  g gold spilled around the nest    ?D your guess
+  T treasure room, once found    t treasure sitting there
+  T? possible treasure room    D? your dragon guess
+  g gold, once you enter that splash
   D Blindscale, once found    * you and Blindscale
+  D* Blindscale burned you (glows; fades after two steps)
 
 Commands
   w a s d     step (also the arrow keys)
-  mark E4     place or move your guess of Blindscale (also the m key)
-  .           end the turn early (also: end, wait, enter, space)
+  m           mark: then t for T? or d for D?, then name a chamber
+  mt E4       toggle T? (same as m, t, E4 in line mode)
+  md E4       toggle D? (same as m, d, E4 in line mode)
+  . or space  end the turn early (also: end, wait, enter)
   ?           this help
   q           quit
 
@@ -172,6 +202,19 @@ def in_bounds(pos: Coord) -> bool:
     return 0 <= row < SIZE and 0 <= col < SIZE
 
 
+def king_neighbors(pos: Coord) -> set[Coord]:
+    row, col = pos
+    out: set[Coord] = set()
+    for drow in (-1, 0, 1):
+        for dcol in (-1, 0, 1):
+            if drow == 0 and dcol == 0:
+                continue
+            nxt = (row + drow, col + dcol)
+            if in_bounds(nxt):
+                out.add(nxt)
+    return out
+
+
 def paint(text: str, code: str, enabled: bool) -> str:
     if not enabled or not text:
         return text
@@ -195,18 +238,22 @@ TAG_COLOR = {
     "[no]": "2",
     "[found]": "1;33",
     "[echo]": "1;33",
+    "[near]": "1;33",
 }
 
 
 class Game:
     """One lair. The player-facing map never includes unrevealed walls,
-    Blindscale's Nest, or Blindscale. A ?D is only the player's guess.
+    Blindscale's Nest, or Blindscale. T? and D? are sense guesses.
     """
 
-    def __init__(self, seed: int | None = None) -> None:
+    def __init__(self, seed: int | None = None, difficulty: str = "normal") -> None:
+        if difficulty not in DIFFICULTIES:
+            raise ValueError(f"unknown difficulty: {difficulty}")
         if seed is None:
             seed = random.SystemRandom().randrange(1, 1_000_000_000)
         self.seed = seed
+        self.difficulty = difficulty
         self.rng = random.Random(seed)
         self.h_wall: list[list[bool]] = []
         self.v_wall: list[list[bool]] = []
@@ -219,15 +266,27 @@ class Game:
         self.treasure_room: Coord | None = None
         self.chest: Coord | None = None
         self.dragon: Coord | None = None
-        self.dragon_mark: Coord | None = None
+        self.nest_marked = False
+        self.treasure_room_guesses: set[Coord] = set()
+        self.dragon_tokens: set[Coord] = set()
+        self.quiet_sleep_steps: list[Coord] = []
+        self.roar_at: Coord | None = None
+        self.roar_dragon_placement: Coord | None = None
+        self.at_roar_moment = False
+        self.burn_count = 0
+        self.death_revealed = False
         self.awake = False
         self.dragon_visible = False
         self.carrying = False
         self.chest_known = False
         self.treasure_room_known = False
         self.burned = False
+        self.burn_at: Coord | None = None
+        self.burn_moves = 0
+        self._near_warned = False
         self.heist_grace = False
         self.gold_spill: set[Coord] = set()
+        self.gold_seen: set[Coord] = set()
         self.endurance = ENDURANCE
         self.turn = 1
         self.steps_taken = 0
@@ -237,6 +296,23 @@ class Game:
             "The grid is bare. The walls, Blindscale's Nest, and Blindscale are already set.",
             "Choose your stairwell — the chamber where you entered the lair, such as D4.",
         ]
+
+    def reveal_treasure_room_after_death(self) -> list[str]:
+        """After defeat, show where the treasure room was on the map."""
+        if self.phase != "lost":
+            return []
+        if self.treasure_room is None:
+            return ["[no] The treasure room is unknown."]
+        if self.death_revealed:
+            where = fmt_coord(self.treasure_room)
+            return [f"[found] The treasure room is already marked on the map at {where}."]
+        self.death_revealed = True
+        self.treasure_room_known = True
+        self.visited.add(self.treasure_room)
+        where = fmt_coord(self.treasure_room)
+        message = f"[found] The treasure room was at {where}. It is marked T on the map."
+        self._note([message])
+        return [message]
 
     def allowance(self) -> int:
         """Chambers you may enter this turn, before a wall.
@@ -260,6 +336,8 @@ class Game:
         return grid[row][col]
 
     def command(self, text: str) -> list[str]:
+        self._near_warned = False
+        self._near_observation = None
         token = text.strip().lower()
         if not token:
             return []
@@ -280,21 +358,9 @@ class Game:
             messages = ["The lair is still. The game is over."]
             self._note(messages)
             return messages
-        if (
-            token in {"m", "mark", "guess"}
-            or token.startswith("mark ")
-            or token.startswith("guess ")
-            or token.startswith("m ")
-        ):
-            if token.startswith("mark "):
-                rest = token[5:].strip()
-            elif token.startswith("guess "):
-                rest = token[6:].strip()
-            elif token.startswith("m "):
-                rest = token[2:].strip()
-            else:
-                rest = ""
-            messages = self._place_mark(rest)
+        sense = self._parse_sense_command(token)
+        if sense is not None:
+            messages = sense
             self._note(messages)
             return messages
         action = WORDS.get(token)
@@ -305,7 +371,7 @@ class Game:
         elif action in DELTA:
             messages = self._step(action)
         else:
-            messages = ["[no] The lair does not understand. Try w, a, s, d, mark E4, end, or ?."]
+            messages = ["[no] The lair does not understand. Try w, a, s, d, mt E4, md E4, end, or ?."]
         self._note(messages)
         return messages
 
@@ -314,7 +380,7 @@ class Game:
         title = paint("BLINDSCALE'S LAIR", "1", color)
         lines.append(title)
         lines.append(
-            f"seed {self.seed} · the walls, the nest, and Blindscale stay hidden"
+            f"seed {self.seed} · {self.difficulty} · the walls, the nest, and Blindscale stay hidden"
         )
         lines.append("")
         lines.append(self._header(color))
@@ -326,22 +392,28 @@ class Game:
         lines.append(self._hline([WALL] * SIZE, color))
         lines.append("")
         lines.append("... : untested    --- | wall    gap  passage you walked    . entered")
-        lines.append("@ you   $ with treasure   S stairwell   T treasure   t empty nest   g spilled gold")
-        lines.append("?D your guess of Blindscale   D Blindscale, once found   * you and Blindscale")
+        lines.append("@ you   $ with treasure   S stairwell   T treasure room   t treasure   g gold you have entered")
+        lines.append("T? possible treasure room   D? your dragon guess   D Blindscale, once found   * you and Blindscale")
+        lines.append("D* Blindscale burned you (glows, fades after two steps)")
         lines.append("")
         lines.extend(self._status(color))
         lines.append("")
         shown = self.log[-8:]
         for entry in shown:
             lines.append(self._color_message(entry, color))
+        if self.phase == "play":
+            lines.append("")
+            lines.append(self._steps_line(color))
         return "\n".join(lines)
 
     # --- generation -----------------------------------------------------
 
     def _generate(self) -> None:
-        """Depth-first labyrinth. A spanning tree of passages is carved,
-        then each unused edge is walled with WALL_ODDS. The result is
-        connected, with a few loops, and every internal edge is decided.
+        """Depth-first labyrinth. A spanning tree of passages is carved.
+
+        Normal then walls each unused edge with WALL_ODDS, so the
+        count follows the seed. Easy opens passages until 25 walls
+        remain, and every chamber stays reachable.
         """
         h: list[list[bool | None]] = [[None] * SIZE for _ in range(SIZE - 1)]
         v: list[list[bool | None]] = [[None] * (SIZE - 1) for _ in range(SIZE)]
@@ -367,7 +439,10 @@ class Game:
                     continue
                 grid, er, ec = locate(row, col, drow, dcol)
                 if grid[er][ec] is None and (nrow, ncol) in visited:
-                    grid[er][ec] = self.rng.random() <= WALL_ODDS
+                    if self.difficulty == "normal":
+                        grid[er][ec] = self.rng.random() <= WALL_ODDS
+                    else:
+                        grid[er][ec] = True
             options: list[tuple[int, int]] = []
             for drow, dcol in offsets:
                 nrow, ncol = row + drow, col + dcol
@@ -390,6 +465,45 @@ class Game:
             raise RuntimeError("labyrinth generation left an undecided edge")
         self.h_wall = [[bool(cell) for cell in row_] for row_ in h]
         self.v_wall = [[bool(cell) for cell in row_] for row_ in v]
+        if self.difficulty == "easy":
+            self._retarget_walls(WALL_COUNTS["easy"])
+
+    def _retarget_walls(self, target: int) -> None:
+        """Open or seal passages until the lair holds exactly target walls."""
+        passages: list[tuple[str, int, int]] = []
+        blocked: list[tuple[str, int, int]] = []
+        for kind, grid in (("h", self.h_wall), ("v", self.v_wall)):
+            for row, cells in enumerate(grid):
+                for col, wall in enumerate(cells):
+                    bucket = blocked if wall else passages
+                    bucket.append((kind, row, col))
+        if len(blocked) > target:
+            self.rng.shuffle(blocked)
+            for kind, row, col in blocked[: len(blocked) - target]:
+                self._set_wall(kind, row, col, False)
+        elif len(blocked) < target:
+            self.rng.shuffle(passages)
+            for kind, row, col in passages[: target - len(blocked)]:
+                self._set_wall(kind, row, col, True)
+
+    def _set_wall(self, kind: str, row: int, col: int, wall: bool) -> None:
+        grid = self.h_wall if kind == "h" else self.v_wall
+        grid[row][col] = wall
+
+    def _reachable_from(self, start: Coord) -> set[Coord]:
+        reached = {start}
+        queue = [start]
+        while queue:
+            row, col = queue.pop()
+            for drow, dcol in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                nxt = (row + drow, col + dcol)
+                if not in_bounds(nxt) or nxt in reached:
+                    continue
+                if self.wall_between((row, col), nxt):
+                    continue
+                reached.add(nxt)
+                queue.append(nxt)
+        return reached
 
     # --- play ------------------------------------------------------------
 
@@ -400,12 +514,20 @@ class Game:
         self.stairwell = pos
         self.pos = pos
         self.visited.add(pos)
+        reached = self._reachable_from(pos)
         far = [
             (row, col)
             for row in range(SIZE)
             for col in range(SIZE)
-            if manhattan((row, col), pos) > WAKE_DISTANCE
+            if (row, col) in reached and manhattan((row, col), pos) > WAKE_DISTANCE
         ]
+        if not far:
+            far = [
+                (row, col)
+                for row in range(SIZE)
+                for col in range(SIZE)
+                if (row, col) in reached and (row, col) != pos
+            ] or [pos]
         # The nest and the sleeping dragon begin in the same chamber.
         # The treasure starts there too. They separate only if you carry
         # the chest away, or drop it when Blindscale burns you.
@@ -423,19 +545,135 @@ class Game:
             "Move with w a s d or the arrow keys. A wall ends the turn.  ? for help.",
         ]
 
-    def _place_mark(self, rest: str) -> list[str]:
-        if not rest:
-            return ["[no] Name a chamber, such as mark E4."]
+    def _parse_sense_command(self, token: str) -> list[str] | None:
+        match = re.fullmatch(r"(mt|md)\s*([a-h][1-8])", token.strip().lower())
+        if not match:
+            return None
+        kind, cell = match.group(1), match.group(2)
+        if kind == "mt":
+            return self._toggle_treasure_flag(cell)
+        return self._toggle_dragon_flag(cell)
+
+    def _clear_roar_moment(self) -> None:
+        self.at_roar_moment = False
+
+    def _possible_nests(self) -> set[Coord]:
+        assert self.stairwell is not None
+        reached = self._reachable_from(self.stairwell)
+        nests = {
+            pos
+            for pos in reached
+            if manhattan(pos, self.stairwell) > WAKE_DISTANCE
+        }
+        for quiet in self.quiet_sleep_steps:
+            nests = {
+                pos for pos in nests if manhattan(pos, quiet) > WAKE_DISTANCE
+            }
+        if self.roar_at is not None:
+            nests = {
+                pos
+                for pos in nests
+                if manhattan(pos, self.roar_at) <= WAKE_DISTANCE
+            }
+        return nests
+
+    def _sync_easy_treasure_guesses(self) -> None:
+        if self.difficulty != "easy":
+            return
+        self.treasure_room_guesses = self._possible_nests()
+
+    def _spawn_easy_dragon_tokens_at_roar(self) -> None:
+        if self.difficulty != "easy":
+            return
+        self.dragon_tokens = set(self._possible_nests())
+
+    def _toggle_treasure_flag(self, rest: str) -> list[str]:
+        if self.difficulty == "easy":
+            return ["[no] Easy keeps T? flags for you."]
         pos = parse_coord(rest)
         if pos is None:
-            return ["[no] Mark a chamber from A1 to H8, such as mark E4."]
-        self.dragon_mark = pos
-        return [
-            f"[mark] You set ?D on {fmt_coord(pos)}. It will move as Blindscale moves."
-        ]
+            return ["[no] Name a chamber from A1 to H8, such as mt E4."]
+        if pos in self.treasure_room_guesses:
+            self.treasure_room_guesses.remove(pos)
+            return [f"[mark] You clear T? from {fmt_coord(pos)}."]
+        self.treasure_room_guesses.add(pos)
+        return [f"[mark] You set T? on {fmt_coord(pos)}."]
+
+    def _toggle_dragon_flag(self, rest: str) -> list[str]:
+        if self.difficulty == "easy":
+            return ["[no] Easy keeps D? flags for you."]
+        pos = parse_coord(rest)
+        if pos is None:
+            return ["[no] Name a chamber from A1 to H8, such as md E4."]
+        if pos in self.dragon_tokens:
+            self.dragon_tokens.remove(pos)
+            if self.roar_dragon_placement == pos:
+                self.roar_dragon_placement = None
+            return [f"[mark] You clear D? from {fmt_coord(pos)}."]
+        if (
+            self.difficulty == "normal"
+            and self.at_roar_moment
+            and self.dragon_tokens
+        ):
+            return ["[no] You may place only one D? when Blindscale first flies."]
+        self.dragon_tokens.add(pos)
+        if self.difficulty == "normal" and self.at_roar_moment:
+            self.roar_dragon_placement = pos
+        return [f"[mark] You set D? on {fmt_coord(pos)}."]
+
+    def _record_quiet_if_asleep(self, dest: Coord) -> None:
+        if (
+            self.awake
+            or self.stairwell is None
+            or dest == self.stairwell
+            or self.treasure_room is None
+        ):
+            return
+        if manhattan(dest, self.treasure_room) <= WAKE_DISTANCE:
+            return
+        self.quiet_sleep_steps.append(dest)
+        self._sync_easy_treasure_guesses()
+
+    def _on_roar(self) -> None:
+        assert self.pos is not None
+        self.roar_at = self.pos
+        self._sync_easy_treasure_guesses()
+        self._spawn_easy_dragon_tokens_at_roar()
+        self.at_roar_moment = True
+
+    def _move_dragon_tokens(self) -> list[str]:
+        if not self.awake or self.pos is None or not self.dragon_tokens:
+            return []
+        messages: list[str] = []
+        moved: set[Coord] = set()
+        for pos in self.dragon_tokens:
+            if self.pos == self.stairwell:
+                nxt = pos
+            else:
+                nxt = step_toward(pos, self.pos)
+            if not in_bounds(nxt):
+                messages.append(f"[mark] D? slips off the map from {fmt_coord(pos)}.")
+                continue
+            moved.add(nxt)
+            if nxt != pos:
+                messages.append(f"[mark] D? glides to {fmt_coord(nxt)}.")
+        self.dragon_tokens = moved
+        return messages
+
+    def _easy_filter_dragon_tokens(self, observation: str | None) -> None:
+        if self.difficulty != "easy" or self.pos is None or observation is None:
+            return
+        self._move_dragon_tokens()
+        adj = king_neighbors(self.pos)
+        if observation == "breadth":
+            self.dragon_tokens &= adj
+        elif observation == "silence":
+            self.dragon_tokens -= adj
 
     def _step(self, direction: str) -> list[str]:
         assert self.pos is not None
+        self._clear_roar_moment()
+        roar_fired = False
         drow, dcol = DELTA[direction]
         dest = (self.pos[0] + drow, self.pos[1] + dcol)
         if not in_bounds(dest):
@@ -458,6 +696,10 @@ class Game:
         self.pos = dest
         self.visited.add(dest)
         self.steps_taken += 1
+        self._fade_burn_mark()
+        self._record_quiet_if_asleep(dest)
+        if dest in self.gold_spill:
+            self.gold_seen.add(dest)
         messages = [f"[clear] You step {DIR_NAME[direction]} to {fmt_coord(dest)}."]
         # The one theft Blindscale allows: the chest, the dragon, and you
         # are all in the nest. Every other shared chamber burns on entry.
@@ -502,12 +744,14 @@ class Game:
             and manhattan(self.pos, self.treasure_room) <= WAKE_DISTANCE
         ):
             self.awake = True
+            roar_fired = True
             messages.append(
                 "[roar] You hear Blindscale's echoing roar and know you are within "
                 "three chambers of the treasure! You can mark and track the dragon's "
                 "probable location on your map as it makes chase, but there is only "
                 "one way to find out if you were right..."
             )
+            self._on_roar()
         if dragon_here and not in_stairwell and not heist:
             self.awake = True
             messages.extend(self._attack())
@@ -519,11 +763,15 @@ class Game:
         elif heist:
             self.heist_grace = True
             messages.extend(self._reveal_true_dragon())
+        # Warn before the dragon flies, so a last step beside it is not missed.
+        messages.extend(self._near_dragon())
+        self._apply_near_observation()
         if self.moves_left == 0:
             messages.extend(self._finish_turn())
         return messages
 
     def _end_turn(self) -> list[str]:
+        self._clear_roar_moment()
         messages = ["[wait] You hold still and end the turn."]
         messages.extend(self._finish_turn())
         return messages
@@ -547,7 +795,10 @@ class Game:
         grace = self.heist_grace and self.pos == self.treasure_room
         self.heist_grace = False
         if not safe and self.dragon == self.pos and not grace:
-            return self._attack()
+            messages = self._attack()
+            messages.extend(self._near_dragon())
+            self._apply_near_observation()
+            return messages
 
         messages: list[str] = []
         if safe:
@@ -555,19 +806,19 @@ class Game:
                 "[safe] You are in the stairwell. Blindscale will not strike you here."
             )
             if not self.treasure_room_known:
-                # Hide the true marker. A ?D guess keeps tracking the flight.
                 self.dragon_visible = False
             target = self.treasure_room
         else:
             target = self.pos
         assert target is not None
 
+        messages.extend(self._near_dragon())
         if self.dragon != target:
-            previous = self.dragon
             self.dragon = step_toward(self.dragon, target)
-            messages.extend(self._shift_mark(previous, self.dragon))
+            messages.extend(self._move_dragon_tokens())
             if not safe and self.dragon == self.pos:
                 messages.extend(self._attack())
+                messages.extend(self._near_dragon())
                 return messages
             if safe and self.burned and self.dragon == self.treasure_room:
                 messages.extend(self._spill_gold())
@@ -577,57 +828,94 @@ class Game:
                 messages.append("[wings] Somewhere in the dark, Blindscale flies one chamber.")
         elif safe and self.dragon_visible:
             messages.append("[still] Blindscale waits in the nest.")
+        messages.extend(self._near_dragon())
+        self._apply_near_observation()
         return messages
 
     def _spill_gold(self) -> list[str]:
-        """Gold rings the nest. The nest chamber itself stays unmarked."""
+        """Gold falls on the four rooms beside the nest. The nest stays blank.
+
+        A splash stays off the map until you walk into that room.
+        """
         assert self.treasure_room is not None
         row, col = self.treasure_room
-        for drow in (-1, 0, 1):
-            for dcol in (-1, 0, 1):
-                if drow == 0 and dcol == 0:
-                    continue
-                pos = (row + drow, col + dcol)
-                if in_bounds(pos):
-                    self.gold_spill.add(pos)
+        for drow, dcol in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            pos = (row + drow, col + dcol)
+            if in_bounds(pos):
+                self.gold_spill.add(pos)
         return [
             "[echo] You hear Blindscale return to its hoard, as well as "
             "the echo of treasure down upon its impact!"
         ]
 
-    def _shift_mark(self, previous: Coord, current: Coord) -> list[str]:
-        """Move ?D by the same delta as Blindscale. Drop it if it leaves the lair."""
-        if self.dragon_mark is None:
-            return []
-        drow = current[0] - previous[0]
-        dcol = current[1] - previous[1]
-        if drow == 0 and dcol == 0:
-            return []
-        nxt = (self.dragon_mark[0] + drow, self.dragon_mark[1] + dcol)
-        if not in_bounds(nxt):
-            self.dragon_mark = None
-            return ["[mark] ?D slips off the map."]
-        self.dragon_mark = nxt
-        return [f"[mark] ?D glides to {fmt_coord(nxt)}."]
-
     def _reveal_true_dragon(self) -> list[str]:
-        """Replace a correct ?D with D, or wipe a wrong one, when you meet Blindscale."""
-        if self.dragon_visible and self.dragon_mark is None:
+        """Show Blindscale once you meet it outside the stairwell."""
+        if self.dragon_visible:
             return []
-        on_mark = self.dragon_mark is not None and self.dragon_mark == self.dragon
-        had_mark = self.dragon_mark is not None
-        self.dragon_mark = None
         self.dragon_visible = True
-        if on_mark:
-            return ["[found] Blindscale is on your mark. ?D becomes the true dragon."]
-        if had_mark:
-            return ["[found] You stumble upon Blindscale. ?D is wiped from the map."]
-        return []
+        return ["[found] You stumble upon Blindscale."]
+
+    def _remember_burn(self) -> None:
+        """The strike chamber glows, then remembers where you stood."""
+        assert self.pos is not None
+        self.burn_at = self.pos
+        self.burn_moves = 0
+
+    def _fade_burn_mark(self) -> None:
+        """Each step you take wears the burn mark down. Two steps clear it."""
+        if self.burn_at is None:
+            return
+        self.burn_moves += 1
+        if self.burn_moves >= BURN_MARK_STEPS:
+            self.burn_at = None
+            self.burn_moves = 0
+
+    def _burn_glyph(self, pos: Coord) -> str | None:
+        if self.burn_at != pos or self.burn_moves >= BURN_MARK_STEPS:
+            return None
+        return "D*"
+
+    def _near_dragon(self) -> list[str]:
+        """Warn once per command when Blindscale is a king-step away."""
+        if self._near_warned or self.phase != "play":
+            return []
+        if self.pos is None or self.dragon is None or not self.awake:
+            return []
+        if chebyshev(self.pos, self.dragon) != 1:
+            self._near_observation = "silence"
+            return []
+        self._near_warned = True
+        self._near_observation = "breadth"
+        return [
+            "[near] You can almost feel Blindscale's breadth and sense that it is one chamber away!"
+        ]
+
+    def _apply_near_observation(self) -> None:
+        if self._near_observation is None:
+            return
+        self._easy_filter_dragon_tokens(self._near_observation)
 
     def _attack(self) -> list[str]:
         assert self.pos is not None and self.stairwell is not None
         self.burned = True
+        self._remember_burn()
+        self.burn_count += 1
+        first_burn = self.burn_count == 1
+        proved_nest = (
+            first_burn
+            and self.roar_dragon_placement is not None
+            and self.roar_dragon_placement == self.treasure_room
+        )
         messages = self._reveal_true_dragon()
+        self.dragon_tokens.clear()
+        if proved_nest and not self.treasure_room_known:
+            self.nest_marked = True
+            if self.treasure_room in self.treasure_room_guesses:
+                self.treasure_room_guesses.discard(self.treasure_room)
+            messages.append(
+                "[found] Your D? was where Blindscale started. "
+                "The treasure room is marked on the map."
+            )
         burn = fmt_coord(self.pos)
         dropped = False
         if self.carrying:
@@ -680,22 +968,33 @@ class Game:
         pos = (row, col)
         dragon_here = bool(self.dragon_visible and self.dragon == pos)
         you = self.pos == pos
+        burn_glyph = self._burn_glyph(pos)
         if you and dragon_here:
+            if burn_glyph == "D*":
+                return "D*"
             return "*"
         if you:
             return "$" if self.carrying else "@"
+        if burn_glyph is not None:
+            return burn_glyph
         if dragon_here:
             return "D"
-        if self.dragon_mark == pos:
-            return "?D"
         if self.chest_known and not self.carrying and self.chest == pos:
-            return "T"
-        if self.treasure_room_known and self.treasure_room == pos:
             return "t"
+        if (
+            self.treasure_room is not None
+            and self.treasure_room == pos
+            and (self.treasure_room_known or self.nest_marked)
+        ):
+            return "T"
         if self.stairwell == pos:
             return "S"
-        if pos in self.gold_spill:
+        if pos in self.gold_seen:
             return "g"
+        if pos in self.dragon_tokens:
+            return "D?"
+        if pos in self.treasure_room_guesses:
+            return "T?"
         if pos in self.visited:
             return "."
         return " "
@@ -724,7 +1023,7 @@ class Game:
         for col in range(SIZE):
             glyph = self._glyph(row, col)
             painted = self._paint_glyph(glyph, color)
-            if glyph == "?D":
+            if len(glyph) == 2:
                 # Two characters plus one space, so the cell stays three wide.
                 parts.append(painted + " ")
             else:
@@ -746,10 +1045,12 @@ class Game:
             "@": "1;36",
             "$": "1;33",
             "S": "1;34",
-            "T": "1;33",
-            "t": "33",
+            "T": "33",
+            "t": "1;33",
             "D": "1;31",
-            "?D": "1;33",
+            "T?": "33",
+            "D?": "1;33",
+            "D*": "1;5;93;41",
             "g": "1;33",
             "*": "1;35",
             ".": "2",
@@ -796,12 +1097,43 @@ class Game:
             lines.append(paint("DEFEAT. Blindscale's third attack ends you.", "1;31", color))
         lines.append(
             f"Turn {self.turn}   You {where}   Endurance {self.endurance}   "
-            f"Chambers left {self.moves_left}"
+            f"Steps left {self.moves_left}"
         )
         lines.append(f"Dragon: {dragon}   Treasure: {loot}")
-        if self.dragon_mark is not None:
-            lines.append(f"Guess: ?D at {fmt_coord(self.dragon_mark)}")
+        if self.difficulty == "easy":
+            lines.append(
+                f"Treasure rooms: {len(self.treasure_room_guesses)}   "
+                f"Dragon tokens: {len(self.dragon_tokens)}"
+            )
+        else:
+            lines.append(
+                f"T? placed: {len(self.treasure_room_guesses)}   "
+                f"D? placed: {len(self.dragon_tokens)}"
+            )
+        if self.burn_at is not None and self.burn_moves < BURN_MARK_STEPS:
+            where_burn = fmt_coord(self.burn_at)
+            left = BURN_MARK_STEPS - self.burn_moves
+            noun = "step" if left == 1 else "steps"
+            lines.append(
+                paint(
+                    f"Burn: glowing D* at {where_burn} fades after {left} more {noun}.",
+                    "1;93;41",
+                    color,
+                )
+            )
         return lines
+
+    def _steps_line(self, color: bool) -> str:
+        """A count and a bar for the chambers still left this turn."""
+        left = self.moves_left
+        total = max(self.allowance(), left)
+        bar = "#" * left + "." * (total - left)
+        noun = "step" if left == 1 else "steps"
+        return paint(
+            f"Steps remaining: {left} {noun} of {total}  [{bar}]",
+            "1;96",
+            color,
+        )
 
     def _color_message(self, entry: str, color: bool) -> str:
         for tag, code in TAG_COLOR.items():
@@ -822,8 +1154,62 @@ def _read_line(prompt: str) -> str | None:
     return line
 
 
-def _read_key() -> str | None:
-    """One command from a terminal: WASD, arrows, m, q, ?, or end-the-turn."""
+# Second byte of a Windows console arrow. These letters are what command()
+# expects: w north, a west, s south, d east.
+_WIN_ARROWS = {"H": "w", "P": "s", "M": "d", "K": "a"}
+_VT_ARROWS = {"\x1b[A": "w", "\x1b[B": "s", "\x1b[C": "d", "\x1b[D": "a"}
+
+
+def _command_from_char(char: str) -> str:
+    """Map one typed character to a command. Empty means ignore it."""
+    if char == "\x03":
+        raise KeyboardInterrupt
+    if char in "\r\n. ":
+        return "end"
+    folded = char.lower()
+    if folded in {"w", "a", "s", "d", "m", "q"}:
+        return folded
+    if char == "?":
+        return "?"
+    return ""
+
+
+def _read_tty_char(*, map_arrows: bool = True) -> str | None:
+    """One character from the terminal, without waiting for Enter."""
+    if sys.platform == "win32":
+        try:
+            return _read_tty_char_windows(map_arrows=map_arrows)
+        except OSError:
+            line = _read_line("")
+            if line is None:
+                return None
+            return line[:1].lower() if line else None
+    return _read_tty_char_posix(map_arrows=map_arrows)
+
+
+def _read_tty_char_windows(*, map_arrows: bool = True) -> str | None:
+    import msvcrt
+
+    char = msvcrt.getwch()
+    if char in ("\x00", "\xe0"):
+        if not map_arrows:
+            return ""
+        return _WIN_ARROWS.get(msvcrt.getwch(), "")
+    if char == "\x1b":
+        if not map_arrows:
+            return ""
+        sequence = char
+        for _ in range(2):
+            if not msvcrt.kbhit():
+                break
+            sequence += msvcrt.getwch()
+        return _VT_ARROWS.get(sequence, "")
+    if char == "\x03":
+        raise KeyboardInterrupt
+    return char.lower()
+
+
+def _read_tty_char_posix(*, map_arrows: bool = True) -> str | None:
     import termios
     import tty
 
@@ -832,39 +1218,91 @@ def _read_key() -> str | None:
     try:
         tty.setraw(fd)
         char = sys.stdin.read(1)
-        if char == "\x03":
-            raise KeyboardInterrupt
+        if not char:
+            return None
         if char == "\x1b":
+            if not map_arrows:
+                return ""
             sequence = char
             for _ in range(2):
                 ready, _, _ = select.select([sys.stdin], [], [], 0.05)
                 if not ready:
                     break
                 sequence += sys.stdin.read(1)
-            # These letters are what command() expects: w north, a west, s south, d east.
-            arrows = {"\x1b[A": "w", "\x1b[B": "s", "\x1b[C": "d", "\x1b[D": "a"}
-            return arrows.get(sequence, "")
-        if char in "\r\n. ":
-            return "end"
-        if char in {"w", "W"}:
-            return "w"
-        if char in {"a", "A"}:
-            return "a"
-        if char in {"s", "S"}:
-            return "s"
-        if char in {"d", "D"}:
-            return "d"
-        if char in {"m", "M"}:
-            return "m"
-        if char in {"q", "Q"}:
-            return "q"
-        if char == "?":
-            return "?"
-        return ""
+            return _VT_ARROWS.get(sequence, "")
+        if char == "\x03":
+            raise KeyboardInterrupt
+        return char.lower()
     except KeyboardInterrupt:
         raise
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _read_key() -> str | None:
+    """One command from a terminal: WASD, arrows, m, q, ?, or end-the-turn."""
+    char = _read_tty_char(map_arrows=True)
+    if char is None:
+        return None
+    if char == "":
+        return ""
+    if char == "?":
+        return "?"
+    return _command_from_char(char)
+
+
+def _mark_command_from_kind_and_cell(kind: str, cell: str) -> str | None:
+    token = cell.strip().lower()
+    if not token:
+        return None
+    if kind == "t":
+        return f"mt {token}"
+    if kind == "d":
+        return f"md {token}"
+    return None
+
+
+def _read_mark_command_interactive() -> str | None:
+    """After m: read t or d one key at a time, then the chamber on a line."""
+    sys.stdout.write("Mark treasure T? (t) or dragon D? (d). q cancels.\n")
+    sys.stdout.flush()
+    while True:
+        sys.stdout.write("t/d> ")
+        sys.stdout.flush()
+        kind = _read_tty_char(map_arrows=False)
+        if kind is None:
+            return None
+        if kind in {"", "\r", "\n"}:
+            continue
+        if kind == "q":
+            return None
+        if kind in {"t", "d"}:
+            break
+        sys.stdout.write("[no] Press t, d, or q.\n")
+        sys.stdout.flush()
+    line = _read_line("Chamber> ")
+    if line is None:
+        return None
+    cmd = _mark_command_from_kind_and_cell(kind, line)
+    if cmd is None:
+        sys.stdout.write("[no] Name a chamber from A1 to H8.\n")
+        sys.stdout.flush()
+    return cmd
+
+
+def _read_key_line() -> str | None:
+    """Line mode, for a terminal that cannot deliver one key at a time."""
+    line = _read_line("> ")
+    if line is None:
+        return None
+    token = line.strip().lower()
+    if token == "":
+        return "end"
+    if token in {"?", "help"}:
+        return "?"
+    if token in {"m", "mark"}:
+        return "m"
+    return token
 
 
 def _show_help(interactive: bool) -> None:
@@ -883,14 +1321,46 @@ def _draw(game: Game, interactive: bool) -> None:
     sys.stdout.write(game.render(color=interactive))
     sys.stdout.write("\n")
     if game.phase == "play" and interactive:
-        sys.stdout.write("\nw a s d or arrows    m mark    . end turn    ? help    q quit\n")
+        sys.stdout.write(
+            "\nw a s d or arrows    m then t/d to mark    space or . end turn    ? help    q quit\n"
+        )
     sys.stdout.flush()
 
 
-def play(seed: int | None = None) -> int:
+def _ask_difficulty() -> str | None:
+    sys.stdout.write(
+        "Difficulty: easy (25 walls), normal (seeded odds).\n"
+    )
+    sys.stdout.flush()
+    while True:
+        line = _read_line("Difficulty> ")
+        if line is None:
+            return None
+        token = line.strip().lower()
+        aliases = {
+            "e": "easy",
+            "easy": "easy",
+            "n": "normal",
+            "normal": "normal",
+        }
+        if token in aliases:
+            return aliases[token]
+        sys.stdout.write("Choose easy or normal.\n")
+        sys.stdout.flush()
+
+
+def play(seed: int | None = None, difficulty: str | None = None) -> int:
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
     while True:
-        game = Game(seed=seed)
+        chosen = difficulty
+        if chosen is None:
+            if interactive:
+                chosen = _ask_difficulty()
+                if chosen is None:
+                    return 0
+            else:
+                chosen = "normal"
+        game = Game(seed=seed, difficulty=chosen)
         _draw(game, interactive)
         while game.phase == "choose" or game.phase == "play":
             if game.phase == "choose":
@@ -918,14 +1388,14 @@ def play(seed: int | None = None) -> int:
                         _draw(game, interactive)
                         continue
                     if action == "m":
-                        line = _read_line("Mark chamber> ")
-                        if line is None:
-                            return 0
-                        game.command(f"mark {line}")
+                        mark_cmd = _read_mark_command_interactive()
+                        if mark_cmd is None:
+                            continue
+                        game.command(mark_cmd)
                     else:
                         game.command(action)
                 else:
-                    line = _read_line(f"{game.moves_left} left> ")
+                    line = _read_line(f"{game.moves_left} steps left> ")
                     if line is None:
                         return 0
                     if line.strip().lower() in {"?", "help"}:
@@ -936,8 +1406,22 @@ def play(seed: int | None = None) -> int:
                 _draw(game, interactive)
                 return 0
             _draw(game, interactive)
-        answer = _read_line("Again? [y/n] ")
-        if answer is None or not answer.strip().lower().startswith("y"):
+        while True:
+            if game.phase == "lost":
+                answer = _read_line("Again? [y/n] Or reveal? [r] ")
+            else:
+                answer = _read_line("Again? [y/n] ")
+            if answer is None:
+                return 0
+            token = answer.strip().lower()
+            if game.phase == "lost" and token.startswith("r"):
+                for line in game.reveal_treasure_room_after_death():
+                    sys.stdout.write(line + "\n")
+                sys.stdout.flush()
+                _draw(game, interactive)
+                continue
+            if token.startswith("y"):
+                break
             return 0
         seed = None
 
@@ -952,9 +1436,15 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="repeat a lair. Omit it for a new one each game.",
     )
+    parser.add_argument(
+        "--difficulty",
+        choices=DIFFICULTIES,
+        default=None,
+        help="easy is 25 walls, normal keeps the seeded odds.",
+    )
     args = parser.parse_args(argv)
     try:
-        return play(args.seed)
+        return play(args.seed, args.difficulty)
     except KeyboardInterrupt:
         sys.stdout.write("\nYou step away from the lair.\n")
         return 0
